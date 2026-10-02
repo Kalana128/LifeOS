@@ -1,421 +1,235 @@
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, Pencil, CreditCard as CreditCardIcon, DollarSign } from 'lucide-react'
+import { Plus, Trash2, Pencil, CreditCard as CreditCardIcon } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 
 interface Charge {
   id: number
   description: string
   amount: number
-  date: string
-  isInstallment: boolean
-  installmentMonths?: number
-  monthlyAmount?: number
+  created_at: string
+  is_installment: boolean
+  months?: number
+  monthly_amount?: number
 }
 
 interface Payment {
   id: number
   amount: number
-  date: string
+  created_at: string
 }
 
 interface CreditCardProps {
   isDark: boolean
+  isSidebarCollapsed: boolean
 }
 
-export default function CreditCard({ isDark }: CreditCardProps) {
-  // 1. State
+// Helper to format number with commas as you type
+const formatInputNumber = (val: string) => {
+  const raw = val.replace(/[^0-9]/g, '');
+  if (raw === '') return '';
+  return parseInt(raw, 10).toLocaleString('en-US');
+};
+
+export default function CreditCard({ isDark, isSidebarCollapsed }: CreditCardProps) {
   const [charges, setCharges] = useState<Charge[]>([])
   const [payments, setPayments] = useState<Payment[]>([])
+  const [description, setDescription] = useState('')
   
-  // Form states
-  const [chargeDescription, setChargeDescription] = useState('')
-  const [chargeAmount, setChargeAmount] = useState('')
+  // Split amount into raw (for DB) and formatted (for UI)
+  const [amount, setAmount] = useState('') 
+  const [formattedAmount, setFormattedAmount] = useState('') 
+  
   const [isInstallment, setIsInstallment] = useState(false)
-  const [installmentMonths, setInstallmentMonths] = useState('')
+  const [months, setMonths] = useState('')
   
+  // Split payment amount into raw and formatted
   const [paymentAmount, setPaymentAmount] = useState('')
-
-  // Edit state
-  const [editingChargeId, setEditingChargeId] = useState<number | null>(null)
-  const [editChargeDesc, setEditChargeDesc] = useState('')
-  const [editChargeAmount, setEditChargeAmount] = useState('')
-
+  const [formattedPaymentAmount, setFormattedPaymentAmount] = useState('')
+  
   const [loading, setLoading] = useState(true)
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editDescription, setEditDescription] = useState('')
+  const [editAmount, setEditAmount] = useState('')
+  const [formattedEditAmount, setFormattedEditAmount] = useState('')
+  const [editIsInstallment, setEditIsInstallment] = useState(false)
+  const [editMonths, setEditMonths] = useState('')
 
-  // 2. Load from Supabase
-  useEffect(() => {
-    fetchCharges()
-    fetchPayments()
-  }, [])
+  useEffect(() => { fetchData() }, [])
 
-  const fetchCharges = async () => {
+  const fetchData = async () => {
     setLoading(true)
-    const { data, error } = await supabase
-      .from('cc_charges')
-      .select('*')
-      .order('created_at', { ascending: false })
-
-    if (error) console.error('Error fetching charges:', error)
-    else if (data) {
-      // FIXED: Now properly maps ALL snake_case columns from Supabase to camelCase
-      const mapped = data.map(c => ({
-        id: c.id,
-        description: c.description,
-        amount: Number(c.amount),
-        date: c.created_at,
-        isInstallment: c.is_installment,
-        installmentMonths: c.installment_months,
-        monthlyAmount: c.monthly_amount ? Number(c.monthly_amount) : undefined
-      }))
-      setCharges(mapped)
-    }
-  }
-
-  const fetchPayments = async () => {
-    const { data, error } = await supabase
-      .from('cc_payments')
-      .select('*')
-      .order('created_at', { ascending: false })
-
-    if (error) console.error('Error fetching payments:', error)
-    else if (data) {
-      const mapped = data.map(p => ({ 
-        id: p.id,
-        amount: Number(p.amount),
-        date: p.created_at
-      }))
-      setPayments(mapped)
-    }
+    const [chargesRes, paymentsRes] = await Promise.all([
+      supabase.from('cc_charges').select('*').order('created_at', { ascending: false }),
+      supabase.from('cc_payments').select('*').order('created_at', { ascending: false })
+    ])
+    if (chargesRes.data) setCharges(chargesRes.data.map(c => ({ ...c, amount: Number(c.amount), monthly_amount: c.monthly_amount ? Number(c.monthly_amount) : undefined })))
+    if (paymentsRes.data) setPayments(paymentsRes.data.map(p => ({ ...p, amount: Number(p.amount) })))
     setLoading(false)
   }
 
-  // 3. Calculate totals
-  const totalCharges = charges.reduce((sum, c) => sum + Number(c.amount), 0)
-  const totalPayments = payments.reduce((sum, p) => sum + Number(p.amount), 0)
-  const currentBalance = totalCharges - totalPayments
-
-  const monthlyInstallments = charges
-    .filter(c => c.isInstallment && c.monthlyAmount)
-    .reduce((sum, c) => sum + Number(c.monthlyAmount || 0), 0)
-  
-  const oneTimeCharges = charges
-    .filter(c => !c.isInstallment)
-    .reduce((sum, c) => sum + Number(c.amount), 0)
-  
-  const totalDueThisMonth = monthlyInstallments + oneTimeCharges
-
-  // 4. Actions (Supabase)
   const addCharge = async () => {
-    const parsedAmount = parseFloat(chargeAmount)
-    if (!chargeDescription.trim() || isNaN(parsedAmount) || parsedAmount <= 0) return
-
-    const newCharge = {
-      description: chargeDescription,
-      amount: parsedAmount,
-      is_installment: isInstallment,
-      installment_months: isInstallment ? parseInt(installmentMonths) : null,
-      monthly_amount: isInstallment ? (parsedAmount / parseInt(installmentMonths)) : null,
-      created_at: new Date().toISOString()
-    }
-
-    const { data, error } = await supabase
-      .from('cc_charges')
-      .insert([newCharge])
-      .select()
-
-    if (error) {
-      console.error('Error adding charge:', error)
-    } else if (data) {
-      const mapped = data.map(c => ({
-        id: c.id,
-        description: c.description,
-        amount: Number(c.amount),
-        date: c.created_at,
-        isInstallment: c.is_installment,
-        installmentMonths: c.installment_months,
-        monthlyAmount: c.monthly_amount ? Number(c.monthly_amount) : undefined
-      }))
-      setCharges([...mapped, ...charges])
-      setChargeDescription('')
-      setChargeAmount('')
-      setIsInstallment(false)
-      setInstallmentMonths('')
-    }
+    if (!description.trim() || !amount || parseFloat(amount) <= 0) return
+    const monthly = isInstallment && months ? parseFloat(amount) / parseInt(months) : undefined
+    const { data, error } = await supabase.from('cc_charges').insert([{ description, amount: parseFloat(amount), is_installment: isInstallment, months: isInstallment ? parseInt(months) : null, monthly_amount: monthly, created_at: new Date().toISOString() }]).select()
+    if (!error && data) { setCharges([{ ...data[0], amount: Number(data[0].amount), monthly_amount: data[0].monthly_amount ? Number(data[0].monthly_amount) : undefined }, ...charges]); setDescription(''); setAmount(''); setFormattedAmount(''); setMonths(''); setIsInstallment(false) }
   }
 
   const makePayment = async () => {
-    const parsedAmount = parseFloat(paymentAmount)
-    if (isNaN(parsedAmount) || parsedAmount <= 0) return
-
-    const newPayment = {
-      amount: parsedAmount,
-      created_at: new Date().toISOString()
-    }
-
-    const { data, error } = await supabase
-      .from('cc_payments')
-      .insert([newPayment])
-      .select()
-
-    if (error) {
-      console.error('Error making payment:', error)
-    } else if (data) {
-      const mapped = data.map(p => ({ 
-        id: p.id,
-        amount: Number(p.amount),
-        date: p.created_at
-      }))
-      setPayments([...mapped, ...payments])
-      setPaymentAmount('')
-    }
+    if (!paymentAmount || parseFloat(paymentAmount) <= 0) return
+    const { data, error } = await supabase.from('cc_payments').insert([{ amount: parseFloat(paymentAmount), created_at: new Date().toISOString() }]).select()
+    if (!error && data) { setPayments([{ ...data[0], amount: Number(data[0].amount) }, ...payments]); setPaymentAmount(''); setFormattedPaymentAmount('') }
   }
 
-  const deleteCharge = async (id: number) => {
-    const { error } = await supabase.from('cc_charges').delete().eq('id', id)
-    if (!error) setCharges(charges.filter(c => c.id !== id))
+  const deleteCharge = async (id: number) => { const { error } = await supabase.from('cc_charges').delete().eq('id', id); if (!error) setCharges(charges.filter(c => c.id !== id)) }
+  const deletePayment = async (id: number) => { const { error } = await supabase.from('cc_payments').delete().eq('id', id); if (!error) setPayments(payments.filter(p => p.id !== id)) }
+
+  const startEdit = (charge: Charge) => { 
+    setEditingId(charge.id); 
+    setEditDescription(charge.description); 
+    setEditAmount(String(charge.amount)); 
+    setFormattedEditAmount(Number(charge.amount).toLocaleString('en-US')); 
+    setEditIsInstallment(charge.is_installment); 
+    setEditMonths(charge.months ? String(charge.months) : '') 
+  }
+  
+  const saveEdit = async (id: number) => {
+    if (!editDescription.trim() || !editAmount || parseFloat(editAmount) <= 0) return
+    const monthly = editIsInstallment && editMonths ? parseFloat(editAmount) / parseInt(editMonths) : undefined
+    const { error } = await supabase.from('cc_charges').update({ description: editDescription.trim(), amount: parseFloat(editAmount), is_installment: editIsInstallment, months: editIsInstallment ? parseInt(editMonths) : null, monthly_amount: monthly }).eq('id', id)
+    if (!error) { setCharges(charges.map(c => c.id === id ? { ...c, description: editDescription.trim(), amount: parseFloat(editAmount), is_installment: editIsInstallment, months: editIsInstallment ? parseInt(editMonths) : null, monthly_amount: monthly } : c)); setEditingId(null) }
   }
 
-  const deletePayment = async (id: number) => {
-    const { error } = await supabase.from('cc_payments').delete().eq('id', id)
-    if (!error) setPayments(payments.filter(p => p.id !== id))
-  }
-
-  // Edit actions
-  const startEditCharge = (charge: Charge) => {
-    setEditingChargeId(charge.id)
-    setEditChargeDesc(charge.description)
-    setEditChargeAmount(String(charge.amount))
-  }
-
-  const saveEditCharge = async (id: number) => {
-    const parsedAmount = parseFloat(editChargeAmount)
-    if (!editChargeDesc.trim() || isNaN(parsedAmount) || parsedAmount <= 0) return
-
-    const chargeToUpdate = charges.find(c => c.id === id)
-    const newMonthly = chargeToUpdate?.isInstallment && chargeToUpdate.installmentMonths ? parsedAmount / chargeToUpdate.installmentMonths : null
-
-    const { error } = await supabase
-      .from('cc_charges')
-      .update({ 
-        description: editChargeDesc.trim(),
-        amount: parsedAmount,
-        monthly_amount: newMonthly
-      })
-      .eq('id', id)
-
-    if (error) {
-      console.error('Error saving edit:', error)
-    } else {
-      setCharges(charges.map(c => {
-        if (c.id === id) {
-          return { ...c, description: editChargeDesc.trim(), amount: parsedAmount, monthlyAmount: newMonthly || undefined }
-        }
-        return c
-      }))
-      setEditingChargeId(null)
-      setEditChargeDesc('')
-      setEditChargeAmount('')
-    }
-  }
-
-  const cancelEditCharge = () => {
-    setEditingChargeId(null)
-    setEditChargeDesc('')
-    setEditChargeAmount('')
-  }
-
-  // 5. Helpers
-  const formatMoney = (num: number) => {
-    return new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR' }).format(num)
-  }
-
-  // 6. Dynamic Styles
+  const formatMoney = (num: number) => new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR' }).format(num)
   const cardBg = isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'
   const inputBg = isDark ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-400'
   const rowBg = isDark ? 'bg-gray-800 border-gray-700' : 'bg-gray-50 border-gray-100'
 
+  const totalCharges = charges.reduce((sum, c) => sum + Number(c.amount), 0)
+  const totalPayments = payments.reduce((sum, p) => sum + Number(p.amount), 0)
+  const balance = totalCharges - totalPayments
+
   return (
-    <div className="space-y-6 mt-8">
-      <div className="border-t border-gray-200 dark:border-gray-800 pt-8">
-        <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
-          <CreditCardIcon size={24} />
-          Credit Card
-        </h2>
+    <div className={`space-y-6 mt-8`}>
+      <h3 className="text-lg font-semibold flex items-center gap-2"><CreditCardIcon size={20} className="text-blue-500" /> Credit Card</h3>
+      
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className={`p-4 rounded-2xl border shadow-sm ${cardBg}`}><p className="text-sm text-gray-500 mb-1">Total Charges</p><p className="text-xl font-bold text-red-500">{formatMoney(totalCharges)}</p></div>
+        <div className={`p-4 rounded-2xl border shadow-sm ${cardBg}`}><p className="text-sm text-gray-500 mb-1">Total Payments</p><p className="text-xl font-bold text-green-500">{formatMoney(totalPayments)}</p></div>
+        <div className={`p-4 rounded-2xl border shadow-sm ${cardBg}`}><p className="text-sm text-gray-500 mb-1">Current Balance</p><p className={`text-xl font-bold ${balance > 0 ? 'text-red-500' : 'text-green-500'}`}>{formatMoney(balance)}</p></div>
       </div>
 
-      {/* SUMMARY CARDS */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className={`p-5 rounded-2xl border shadow-sm ${cardBg} transition-colors`}>
-          <div className="flex items-center gap-2 mb-1">
-            <DollarSign size={16} className={currentBalance > 0 ? 'text-red-500' : 'text-green-500'} />
-            <p className="text-sm text-gray-500">Current Balance</p>
-          </div>
-          <p className={`text-2xl font-bold ${currentBalance > 0 ? 'text-red-500' : 'text-green-500'}`}>
-            {formatMoney(currentBalance)}
-          </p>
-        </div>
-        <div className={`p-5 rounded-2xl border shadow-sm ${cardBg} transition-colors`}>
-          <p className="text-sm text-gray-500 mb-1">Due This Month</p>
-          <p className="text-2xl font-bold text-orange-500">{formatMoney(totalDueThisMonth)}</p>
-          <p className="text-xs text-gray-500 mt-1">
-            Installments: {formatMoney(monthlyInstallments)} + One-time: {formatMoney(oneTimeCharges)}
-          </p>
-        </div>
-        <div className={`p-5 rounded-2xl border shadow-sm ${cardBg} transition-colors`}>
-          <p className="text-sm text-gray-500 mb-1">Total Paid</p>
-          <p className="text-2xl font-bold text-green-500">{formatMoney(totalPayments)}</p>
-        </div>
-      </div>
-
-      {/* ADD CHARGE FORM */}
-      <div className={`p-6 rounded-2xl border shadow-sm ${cardBg} transition-colors`}>
-        <h3 className="text-lg font-semibold mb-4">Add Charge</h3>
-        <div className="space-y-3">
-          <div className="flex flex-col md:flex-row gap-3">
-            <input
-              type="text"
-              value={chargeDescription}
-              onChange={(e) => setChargeDescription(e.target.value)}
-              placeholder="Description (e.g. Groceries, Phone)"
-              className={`flex-1 px-4 py-2 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`}
-            />
-            <input
-              type="number"
-              value={chargeAmount}
-              onChange={(e) => setChargeAmount(e.target.value)}
-              placeholder="Amount"
-              className={`w-full md:w-32 px-4 py-2 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`}
-            />
-          </div>
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={isInstallment}
-                onChange={(e) => setIsInstallment(e.target.checked)}
-                className="w-4 h-4 rounded"
-              />
-              <span className="text-sm">This is an installment payment</span>
-            </label>
-          </div>
-          {isInstallment && (
-            <input
-              type="number"
-              value={installmentMonths}
-              onChange={(e) => setInstallmentMonths(e.target.value)}
-              placeholder="Number of months"
-              className={`w-full md:w-48 px-4 py-2 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`}
-            />
-          )}
-          <button
-            onClick={addCharge}
-            className="w-full md:w-auto px-6 py-2 rounded-xl font-medium transition bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2"
-          >
-            <Plus size={18} />
-            Add Charge
-          </button>
-        </div>
-      </div>
-
-      {/* MAKE PAYMENT FORM */}
-      <div className={`p-6 rounded-2xl border shadow-sm ${cardBg} transition-colors`}>
-        <h3 className="text-lg font-semibold mb-4">Make Payment</h3>
-        <div className="flex gap-3">
-          <input
-            type="number"
-            value={paymentAmount}
-            onChange={(e) => setPaymentAmount(e.target.value)}
-            placeholder="Payment amount"
-            className={`flex-1 px-4 py-2 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`}
+      <div className={`p-4 sm:p-6 rounded-2xl border shadow-sm ${cardBg}`}>
+        <h4 className="font-semibold mb-3">Add Charge</h4>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description (e.g. Foods)" className={`flex-1 px-4 py-2 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} />
+          
+          {/* FORMATTED INPUT */}
+          <input 
+            type="text" 
+            inputMode="numeric"
+            value={formattedAmount} 
+            onChange={(e) => {
+              setFormattedAmount(formatInputNumber(e.target.value));
+              setAmount(e.target.value.replace(/[^0-9]/g, ''));
+            }} 
+            placeholder="Amount" 
+            className={`w-full sm:w-32 px-4 py-2 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} 
           />
-          <button
-            onClick={makePayment}
-            className="px-6 py-2 rounded-xl font-medium transition bg-green-600 hover:bg-green-700 text-white"
-          >
-            Pay
-          </button>
+          
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <label className="flex items-center gap-2 text-sm cursor-pointer whitespace-nowrap">
+              <input type="checkbox" checked={isInstallment} onChange={(e) => setIsInstallment(e.target.checked)} className="rounded" /> Installment
+            </label>
+            {isInstallment && <input type="number" value={months} onChange={(e) => setMonths(e.target.value)} placeholder="Months" className={`w-20 px-3 py-2 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} />}
+          </div>
+          <button onClick={addCharge} className="w-full sm:w-auto px-6 py-2 rounded-xl font-medium transition bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-2 active:scale-95"><Plus size={18} /> Add</button>
         </div>
       </div>
 
-      {/* CHARGES LIST */}
-      <div className={`p-6 rounded-2xl border shadow-sm ${cardBg} transition-colors`}>
-        <h3 className="text-lg font-semibold mb-4">Charges</h3>
-        <div className="space-y-3">
-          {loading ? (
-            <p className="text-center text-gray-500 py-8">Loading credit card data...</p>
-          ) : charges.length === 0 ? (
-            <p className="text-center text-gray-500 py-8">No charges yet.</p>
-          ) : (
-            charges.map(charge => (
-              <div key={charge.id} className={`flex items-center justify-between p-4 rounded-xl border ${rowBg}`}>
-                {editingChargeId === charge.id ? (
-                  <div className="flex-1 flex flex-col gap-2">
-                    <input
-                      type="text"
-                      value={editChargeDesc}
-                      onChange={(e) => setEditChargeDesc(e.target.value)}
-                      className={`px-3 py-2 rounded-lg border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`}
+      <div className={`p-4 sm:p-6 rounded-2xl border shadow-sm ${cardBg}`}>
+        <h4 className="font-semibold mb-3">Make Payment</h4>
+        <div className="flex flex-col sm:flex-row gap-3">
+          {/* FORMATTED INPUT */}
+          <input 
+            type="text" 
+            inputMode="numeric"
+            value={formattedPaymentAmount} 
+            onChange={(e) => {
+              setFormattedPaymentAmount(formatInputNumber(e.target.value));
+              setPaymentAmount(e.target.value.replace(/[^0-9]/g, ''));
+            }} 
+            placeholder="Payment amount" 
+            className={`flex-1 px-4 py-2 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} 
+          />
+          <button onClick={makePayment} className="w-full sm:w-auto px-6 py-2 rounded-xl font-medium transition bg-green-600 hover:bg-green-700 text-white active:scale-95">Pay</button>
+        </div>
+      </div>
+
+      <div className={`p-4 sm:p-6 rounded-2xl border shadow-sm ${cardBg}`}>
+        <h4 className="font-semibold mb-4">Charges</h4>
+        {loading ? <p className="text-center text-gray-500">Loading...</p> : charges.length === 0 ? <p className="text-center text-gray-500">No charges yet.</p> : (
+          <div className="space-y-3">
+            {charges.map(c => (
+              <div key={c.id} className={`p-4 rounded-xl border ${rowBg}`}>
+                {editingId === c.id ? (
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <input type="text" value={editDescription} onChange={(e) => setEditDescription(e.target.value)} className={`flex-1 px-3 py-2 rounded-lg border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} />
+                    {/* FORMATTED INPUT */}
+                    <input 
+                      type="text" 
+                      inputMode="numeric"
+                      value={formattedEditAmount} 
+                      onChange={(e) => {
+                        setFormattedEditAmount(formatInputNumber(e.target.value));
+                        setEditAmount(e.target.value.replace(/[^0-9]/g, ''));
+                      }} 
+                      className={`w-full sm:w-32 px-3 py-2 rounded-lg border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} 
                     />
-                    <input
-                      type="number"
-                      value={editChargeAmount}
-                      onChange={(e) => setEditChargeAmount(e.target.value)}
-                      className={`px-3 py-2 rounded-lg border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`}
-                    />
+                    <div className="flex items-center gap-2">
+                      <label className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" checked={editIsInstallment} onChange={(e) => setEditIsInstallment(e.target.checked)} /> Inst.</label>
+                      {editIsInstallment && <input type="number" value={editMonths} onChange={(e) => setEditMonths(e.target.value)} className={`w-16 px-2 py-1 rounded-lg border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} />}
+                    </div>
                     <div className="flex gap-2">
-                      <button onClick={() => saveEditCharge(charge.id)} className="px-3 py-1 text-sm rounded-lg font-medium transition bg-green-600 hover:bg-green-700 text-white">Save</button>
-                      <button onClick={cancelEditCharge} className="px-3 py-1 text-sm rounded-lg font-medium transition bg-gray-500 hover:bg-gray-600 text-white">Cancel</button>
+                      <button onClick={() => saveEdit(c.id)} className="px-3 py-1 text-sm bg-blue-600 text-white rounded-lg">Save</button>
+                      <button onClick={() => setEditingId(null)} className="px-3 py-1 text-sm text-gray-400">Cancel</button>
                     </div>
                   </div>
                 ) : (
-                  <>
-                    <div className="flex-1">
-                      <p className="font-medium flex items-center gap-2">
-                        {charge.description}
-                        {charge.isInstallment && (
-                          <span className="text-xs bg-blue-500 text-white px-2 py-0.5 rounded-full">
-                            {charge.installmentMonths} months
-                          </span>
-                        )}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        {new Date(charge.date).toLocaleDateString()}
-                        {charge.isInstallment && charge.monthlyAmount && (
-                          <> • {formatMoney(charge.monthlyAmount)}/month</>
-                        )}
-                      </p>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">{c.description}</p>
+                      <p className="text-xs text-gray-500">{new Date(c.created_at).toLocaleDateString()}{c.is_installment && c.months && ` • ${c.months} months`}{c.monthly_amount && ` • ${formatMoney(c.monthly_amount)}/month`}</p>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className="font-semibold text-red-500">{formatMoney(charge.amount)}</span>
-                      <button onClick={() => startEditCharge(charge)} className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-500/10 rounded-lg transition" title="Edit"><Pencil size={18} /></button>
-                      <button onClick={() => deleteCharge(charge.id)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition" title="Delete"><Trash2 size={18} /></button>
+                    <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto">
+                      <span className="font-semibold text-red-500">{formatMoney(c.amount)}</span>
+                      <div className="flex gap-1">
+                        <button onClick={() => startEdit(c)} className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-500/10 rounded-lg transition"><Pencil size={16} /></button>
+                        <button onClick={() => deleteCharge(c.id)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition"><Trash2 size={16} /></button>
+                      </div>
                     </div>
-                  </>
+                  </div>
                 )}
               </div>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* PAYMENTS LIST */}
-      <div className={`p-6 rounded-2xl border shadow-sm ${cardBg} transition-colors`}>
-        <h3 className="text-lg font-semibold mb-4">Payment History</h3>
-        <div className="space-y-3">
-          {payments.length === 0 ? (
-            <p className="text-center text-gray-500 py-8">No payments yet.</p>
-          ) : (
-            payments.map(payment => (
-              <div key={payment.id} className={`flex items-center justify-between p-4 rounded-xl border ${rowBg}`}>
-                <p className="text-sm text-gray-500">{new Date(payment.date).toLocaleDateString()}</p>
+      <div className={`p-4 sm:p-6 rounded-2xl border shadow-sm ${cardBg}`}>
+        <h4 className="font-semibold mb-4">Payment History</h4>
+        {payments.length === 0 ? <p className="text-center text-gray-500">No payments yet.</p> : (
+          <div className="space-y-3">
+            {payments.map(p => (
+              <div key={p.id} className={`flex items-center justify-between p-4 rounded-xl border ${rowBg}`}>
+                <p className="text-sm text-gray-500">{new Date(p.created_at).toLocaleDateString()}</p>
                 <div className="flex items-center gap-3">
-                  <span className="font-semibold text-green-500">{formatMoney(payment.amount)}</span>
-                  <button onClick={() => deletePayment(payment.id)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition" title="Delete"><Trash2 size={18} /></button>
+                  <span className="font-semibold text-green-500">{formatMoney(p.amount)}</span>
+                  <button onClick={() => deletePayment(p.id)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition"><Trash2 size={16} /></button>
                 </div>
               </div>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )

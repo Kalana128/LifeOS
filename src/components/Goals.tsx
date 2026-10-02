@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Plus, Trash2, Pencil, Wallet, Star } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import Modal from './Modal'
 
 interface Goal {
   id: number
@@ -20,22 +21,42 @@ interface GoalsProps {
   isSidebarCollapsed: boolean
 }
 
+// Helper to format number with commas as you type
+const formatInputNumber = (val: string) => {
+  const raw = val.replace(/[^0-9]/g, '');
+  if (raw === '') return '';
+  return parseInt(raw, 10).toLocaleString('en-US');
+};
+
 export default function Goals({ isDark, isSidebarCollapsed }: GoalsProps) {
   // 1. State
   const [goals, setGoals] = useState<Goal[]>([])
   const [goalType, setGoalType] = useState<'financial' | 'personal'>('financial')
   const [name, setName] = useState('')
+  
+  // Split into Raw (for DB) and Formatted (for UI)
   const [targetAmount, setTargetAmount] = useState('')
+  const [formattedTargetAmount, setFormattedTargetAmount] = useState('')
+  
   const [monthlyContribution, setMonthlyContribution] = useState('')
+  const [formattedMonthlyContribution, setFormattedMonthlyContribution] = useState('')
+  
   const [targetDate, setTargetDate] = useState('')
   const [initialProgress, setInitialProgress] = useState('0')
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  
   const [fundInputs, setFundInputs] = useState<{[key: number]: string}>({})
   const [progressInputs, setProgressInputs] = useState<{[key: number]: number}>({})
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editName, setEditName] = useState('')
   const [editType, setEditType] = useState<'financial' | 'personal'>('financial')
+  
   const [editTarget, setEditTarget] = useState('')
+  const [formattedEditTarget, setFormattedEditTarget] = useState('')
+  
   const [editMonthly, setEditMonthly] = useState('')
+  const [formattedEditMonthly, setFormattedEditMonthly] = useState('')
+  
   const [editTargetDate, setEditTargetDate] = useState('')
   const [editProgress, setEditProgress] = useState('0')
   const [loading, setLoading] = useState(true)
@@ -75,7 +96,8 @@ export default function Goals({ isDark, isSidebarCollapsed }: GoalsProps) {
     else if (data) {
       const mappedData = data.map(g => ({ id: g.id, name: g.name, type: g.type || 'financial', targetAmount: Number(g.target_amount), currentAmount: Number(g.current_amount), monthlyContribution: Number(g.monthly_contribution), progressPercent: Number(g.progress_percent) || 0, targetDate: g.target_date, completed: g.completed, createdAt: g.created_at }))
       setGoals([...mappedData, ...goals])
-      setName(''); setTargetAmount(''); setMonthlyContribution(''); setTargetDate(''); setInitialProgress('0')
+      setName(''); setTargetAmount(''); setFormattedTargetAmount(''); setMonthlyContribution(''); setFormattedMonthlyContribution(''); setTargetDate(''); setInitialProgress('0')
+      setIsModalOpen(false)
     }
   }
 
@@ -106,7 +128,17 @@ export default function Goals({ isDark, isSidebarCollapsed }: GoalsProps) {
     else setGoals(goals.filter(g => g.id !== id))
   }
 
-  const startEdit = (goal: Goal) => { setEditingId(goal.id); setEditName(goal.name); setEditType(goal.type); setEditTarget(String(goal.targetAmount)); setEditMonthly(String(goal.monthlyContribution)); setEditTargetDate(goal.targetDate ? new Date(goal.targetDate).toISOString().split('T')[0] : ''); setEditProgress(String(goal.progressPercent)) }
+  const startEdit = (goal: Goal) => { 
+    setEditingId(goal.id); 
+    setEditName(goal.name); 
+    setEditType(goal.type); 
+    setEditTarget(String(goal.targetAmount)); 
+    setFormattedEditTarget(Number(goal.targetAmount).toLocaleString('en-US')); 
+    setEditMonthly(String(goal.monthlyContribution)); 
+    setFormattedEditMonthly(Number(goal.monthlyContribution).toLocaleString('en-US')); 
+    setEditTargetDate(goal.targetDate ? new Date(goal.targetDate).toISOString().split('T')[0] : ''); 
+    setEditProgress(String(goal.progressPercent)) 
+  }
   
   const saveEdit = async (id: number) => {
     if (!editName.trim()) return
@@ -140,10 +172,8 @@ export default function Goals({ isDark, isSidebarCollapsed }: GoalsProps) {
   const typeBtn = (active: boolean) => active ? (isDark ? 'bg-blue-600 text-white' : 'bg-blue-500 text-white shadow-sm') : (isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-900')
 
   return (
-    // RESPONSIVE WRAPPER: Centers content, adjusts padding for mobile, and expands based on sidebar
-    <div className={`w-full space-y-6 sm:space-y-8 transition-all duration-300 mx-auto px-4 sm:px-0 ${isSidebarCollapsed ? 'max-w-6xl' : 'max-w-4xl'}`}>
+    <div className={`w-full space-y-6 sm:space-y-8 transition-all duration-300 mx-auto px-4 sm:px-0 relative ${isSidebarCollapsed ? 'max-w-6xl' : 'max-w-4xl'}`}>
       
-      {/* SUMMARY CARDS - 1 col mobile, 3 cols desktop */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className={`p-4 sm:p-5 rounded-2xl border shadow-sm ${cardBg} transition-colors`}>
           <div className="flex items-center gap-2 mb-1"><Star size={16} className="text-purple-500" /><p className="text-sm text-gray-500">Total Goals</p></div>
@@ -159,43 +189,22 @@ export default function Goals({ isDark, isSidebarCollapsed }: GoalsProps) {
         </div>
       </div>
 
-      {/* ADD GOAL FORM */}
-      <div className={`p-4 sm:p-6 rounded-2xl border shadow-sm ${cardBg} transition-colors`}>
-        <h3 className="text-base sm:text-lg font-semibold mb-4">Add New Goal</h3>
-        
-        {/* Toggle stretches on mobile for easy tapping */}
-        <div className={`flex gap-1 mb-4 p-1 rounded-xl w-full sm:w-fit ${isDark ? 'bg-gray-800' : 'bg-gray-100'}`}>
-          <button onClick={() => setGoalType('financial')} className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 ${typeBtn(goalType === 'financial')}`}><Wallet size={16} /> Financial</button>
-          <button onClick={() => setGoalType('personal')} className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 ${typeBtn(goalType === 'personal')}`}><Star size={16} /> Personal</button>
-        </div>
-
-        {/* Inputs stack on mobile, side-by-side on desktop */}
-        <div className="flex flex-col md:flex-row gap-3">
-          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder={goalType === 'financial' ? "Goal name (e.g. New iPhone)" : "Goal name (e.g. Learn React)"} className={`flex-1 px-4 py-2 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} />
-          {goalType === 'financial' ? (
-            <>
-              <input type="number" value={targetAmount} onChange={(e) => setTargetAmount(e.target.value)} placeholder="Target Amount" className={`w-full md:w-40 px-4 py-2 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} />
-              <input type="number" value={monthlyContribution} onChange={(e) => setMonthlyContribution(e.target.value)} placeholder="Monthly (opt)" className={`w-full md:w-40 px-4 py-2 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} />
-            </>
-          ) : (
-            <>
-              <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className={`w-full md:w-40 px-4 py-2 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} />
-              <div className="flex items-center gap-2 w-full md:w-40">
-                <input type="number" min="0" max="100" value={initialProgress} onChange={(e) => setInitialProgress(e.target.value)} placeholder="0" className={`w-20 px-4 py-2 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} />
-                <span className="text-gray-500 text-sm">% done</span>
-              </div>
-            </>
-          )}
-          <button onClick={addGoal} className="w-full md:w-auto px-6 py-2 rounded-xl font-medium transition bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-2"><Plus size={18} /> Add</button>
-        </div>
+      <div className="flex items-center justify-between">
+        <h3 className="text-base sm:text-lg font-semibold">Your Goals</h3>
+        <button
+          onClick={() => setIsModalOpen(true)}
+          className="hidden lg:flex px-4 py-2 rounded-xl font-medium transition bg-blue-600 hover:bg-blue-700 text-white items-center gap-2 active:scale-95"
+        >
+          <Plus size={18} />
+          New Goal
+        </button>
       </div>
 
-      {/* GOALS LIST */}
       <div className="space-y-4">
         {loading ? (
           <p className="text-center text-gray-500 py-8">Loading goals from the cloud...</p>
         ) : goals.length === 0 ? (
-          <div className={`p-8 rounded-2xl border shadow-sm text-center ${cardBg} transition-colors`}><p className="text-gray-500">No goals yet. Add one above to start!</p></div>
+          <div className={`p-8 rounded-2xl border shadow-sm text-center ${cardBg} transition-colors`}><p className="text-gray-500">No goals yet. Tap + to add one!</p></div>
         ) : (
           goals.map(goal => {
             const isFinancial = goal.type === 'financial'
@@ -212,8 +221,8 @@ export default function Goals({ isDark, isSidebarCollapsed }: GoalsProps) {
                     </div>
                     {editType === 'financial' ? (
                       <div className="flex flex-col sm:flex-row gap-2">
-                        <input type="number" value={editTarget} onChange={(e) => setEditTarget(e.target.value)} placeholder="Target Amount" className={`flex-1 px-3 py-2 rounded-lg border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} />
-                        <input type="number" value={editMonthly} onChange={(e) => setEditMonthly(e.target.value)} placeholder="Monthly" className={`flex-1 px-3 py-2 rounded-lg border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} />
+                        <input type="text" inputMode="numeric" value={formattedEditTarget} onChange={(e) => { setFormattedEditTarget(formatInputNumber(e.target.value)); setEditTarget(e.target.value.replace(/[^0-9]/g, '')); }} placeholder="Target Amount" className={`flex-1 px-3 py-2 rounded-lg border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} />
+                        <input type="text" inputMode="numeric" value={formattedEditMonthly} onChange={(e) => { setFormattedEditMonthly(formatInputNumber(e.target.value)); setEditMonthly(e.target.value.replace(/[^0-9]/g, '')); }} placeholder="Monthly" className={`flex-1 px-3 py-2 rounded-lg border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} />
                       </div>
                     ) : (
                       <div className="flex flex-col sm:flex-row gap-2">
@@ -228,7 +237,6 @@ export default function Goals({ isDark, isSidebarCollapsed }: GoalsProps) {
                   </div>
                 ) : (
                   <>
-                    {/* Header & Actions - Stacks on mobile, side-by-side on desktop */}
                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
                       <div className="flex-1 min-w-0">
                         <h4 className="text-base sm:text-lg font-semibold flex items-center gap-2">
@@ -240,30 +248,26 @@ export default function Goals({ isDark, isSidebarCollapsed }: GoalsProps) {
                           {isFinancial ? `${formatMoney(goal.currentAmount)} saved of ${formatMoney(goal.targetAmount)}${goal.monthlyContribution > 0 && !goal.completed ? ` • ${formatMoney(goal.monthlyContribution)}/month` : ''}` : `${goal.progressPercent}% completed${goal.targetDate ? ` • Target: ${new Date(goal.targetDate).toLocaleDateString()}` : ''}`}
                         </p>
                       </div>
-                      
-                      {/* Actions wrap nicely on mobile */}
                       <div className="flex flex-wrap items-center gap-3">
                         {!goal.completed && (
                           isFinancial ? (
                             <>
                               <input type="number" value={fundInputs[goal.id] || ''} onChange={(e) => setFundInputs({ ...fundInputs, [goal.id]: e.target.value })} placeholder="Add funds" className={`w-full sm:w-28 px-3 py-2 text-sm rounded-lg border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} />
-                              <button onClick={() => addFunds(goal.id)} className="w-full sm:w-auto px-4 py-2 text-sm rounded-lg font-medium transition bg-green-600 hover:bg-green-700 text-white flex items-center justify-center gap-2"><Plus size={16} /> Add</button>
+                              <button onClick={() => addFunds(goal.id)} className="w-full sm:w-auto px-4 py-2 text-sm rounded-lg font-medium transition bg-green-600 hover:bg-green-700 text-white flex items-center justify-center gap-2 active:scale-95"><Plus size={16} /> Add</button>
                             </>
                           ) : (
                             <div className="flex flex-col sm:flex-row items-center gap-2 w-full md:w-auto">
                               <input type="range" min="0" max="100" value={progressInputs[goal.id] !== undefined ? progressInputs[goal.id] : goal.progressPercent} onChange={(e) => setProgressInputs({ ...progressInputs, [goal.id]: Number(e.target.value) })} className="w-full sm:w-32 accent-blue-500" />
-                              <button onClick={() => updateProgress(goal.id)} className="w-full sm:w-auto px-4 py-2 text-sm rounded-lg font-medium transition bg-purple-600 hover:bg-purple-700 text-white">Update</button>
+                              <button onClick={() => updateProgress(goal.id)} className="w-full sm:w-auto px-4 py-2 text-sm rounded-lg font-medium transition bg-purple-600 hover:bg-purple-700 text-white active:scale-95">Update</button>
                             </div>
                           )
                         )}
                         <div className="flex gap-1 ml-auto md:ml-0">
-                          <button onClick={() => startEdit(goal)} className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-500/10 rounded-lg transition" title="Edit"><Pencil size={18} /></button>
-                          <button onClick={() => deleteGoal(goal.id)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition" title="Delete"><Trash2 size={18} /></button>
+                          <button onClick={() => startEdit(goal)} className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-500/10 rounded-lg transition active:scale-90" title="Edit"><Pencil size={18} /></button>
+                          <button onClick={() => deleteGoal(goal.id)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition active:scale-90" title="Delete"><Trash2 size={18} /></button>
                         </div>
                       </div>
                     </div>
-
-                    {/* Progress Bar */}
                     <div className={`w-full h-3 rounded-full overflow-hidden ${progressBg}`}>
                       <div className={`h-full rounded-full transition-all duration-500 ${goal.completed ? 'bg-green-500' : (isFinancial ? 'bg-green-500' : 'bg-purple-500')}`} style={{ width: `${progress}%` }}></div>
                     </div>
@@ -278,6 +282,82 @@ export default function Goals({ isDark, isSidebarCollapsed }: GoalsProps) {
           })
         )}
       </div>
+
+      <button
+        onClick={() => setIsModalOpen(true)}
+        className="lg:hidden fixed bottom-6 right-6 w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg shadow-blue-600/30 flex items-center justify-center transition-transform active:scale-90 z-30"
+        aria-label="Add new goal"
+      >
+        <Plus size={28} />
+      </button>
+
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Add New Goal" isDark={isDark}>
+        <div className="space-y-4">
+          <div className={`flex gap-1 p-1 rounded-xl w-full ${isDark ? 'bg-gray-800' : 'bg-gray-100'}`}>
+            <button onClick={() => setGoalType('financial')} className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 ${typeBtn(goalType === 'financial')}`}><Wallet size={16} /> Financial</button>
+            <button onClick={() => setGoalType('personal')} className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 ${typeBtn(goalType === 'personal')}`}><Star size={16} /> Personal</button>
+          </div>
+
+          <input 
+            type="text" 
+            value={name} 
+            onChange={(e) => setName(e.target.value)} 
+            placeholder={goalType === 'financial' ? "Goal name (e.g. New iPhone)" : "Goal name (e.g. Learn React)"} 
+            className={`w-full px-4 py-3 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} 
+          />
+          
+          {goalType === 'financial' ? (
+            <div className="grid grid-cols-2 gap-3">
+              <input 
+                type="text" 
+                inputMode="numeric"
+                value={formattedTargetAmount} 
+                onChange={(e) => { 
+                  setFormattedTargetAmount(formatInputNumber(e.target.value)); 
+                  setTargetAmount(e.target.value.replace(/[^0-9]/g, '')); 
+                }} 
+                placeholder="Target Amount" 
+                className={`w-full px-4 py-3 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} 
+              />
+              <input 
+                type="text" 
+                inputMode="numeric"
+                value={formattedMonthlyContribution} 
+                onChange={(e) => { 
+                  setFormattedMonthlyContribution(formatInputNumber(e.target.value)); 
+                  setMonthlyContribution(e.target.value.replace(/[^0-9]/g, '')); 
+                }} 
+                placeholder="Monthly (opt)" 
+                className={`w-full px-4 py-3 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} 
+              />
+            </div>
+          ) : (
+            <div className="flex gap-3">
+              <input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className={`flex-1 px-4 py-3 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} />
+              <div className="flex items-center gap-2 w-32">
+                <input type="number" min="0" max="100" value={initialProgress} onChange={(e) => setInitialProgress(e.target.value)} placeholder="0" className={`w-full px-4 py-3 rounded-xl border outline-none focus:ring-2 focus:ring-blue-500 transition ${inputBg}`} />
+                <span className="text-gray-500 text-sm">%</span>
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-2">
+            <button
+              onClick={() => setIsModalOpen(false)}
+              className={`flex-1 px-4 py-3 rounded-xl font-medium transition ${isDark ? 'bg-gray-800 hover:bg-gray-700 text-gray-300' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'}`}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={addGoal}
+              className="flex-1 px-4 py-3 rounded-xl font-medium transition bg-blue-600 hover:bg-blue-700 text-white active:scale-95"
+            >
+              Add Goal
+            </button>
+          </div>
+        </div>
+      </Modal>
+
     </div>
   )
 }
