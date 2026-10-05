@@ -1,4 +1,6 @@
-import { Home, ListChecks, Wallet, Target, BarChart3, Sun, Moon, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react'
+import { useState } from 'react'
+import { Home, ListChecks, Wallet, Target, BarChart3, Sun, Moon, PanelLeftClose, PanelLeftOpen, X, LogOut, User } from 'lucide-react'
+import { supabase } from '../lib/supabase'
 
 interface SidebarProps {
   currentPage: string
@@ -9,6 +11,7 @@ interface SidebarProps {
   toggleSidebar: () => void
   isMobileMenuOpen: boolean
   closeMobileMenu: () => void
+  user: any
 }
 
 export default function Sidebar({ 
@@ -19,9 +22,12 @@ export default function Sidebar({
   isCollapsed, 
   toggleSidebar,
   isMobileMenuOpen,
-  closeMobileMenu
+  closeMobileMenu,
+  user
 }: SidebarProps) {
   
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
+
   const menuItems = [
     { id: 'home', label: 'Home', icon: Home },
     { id: 'tasks', label: 'Tasks', icon: ListChecks },
@@ -29,6 +35,24 @@ export default function Sidebar({
     { id: 'goals', label: 'Goals', icon: Target },
     { id: 'reports', label: 'Reports', icon: BarChart3 },
   ]
+
+  const userName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'User'
+  const userInitial = userName.charAt(0).toUpperCase()
+  const userEmail = user?.email || ''
+
+  const handleLogout = async () => {
+    setIsProfileMenuOpen(false) // Close menu first
+    const { error } = await supabase.auth.signOut()
+    if (error) console.error('Error signing out:', error)
+  }
+
+  const handleProfileClick = () => {
+    if (isCollapsed && !isMobileMenuOpen) {
+      toggleSidebar() // Expand sidebar if collapsed
+    } else {
+      setIsProfileMenuOpen(!isProfileMenuOpen) // Toggle dropdown
+    }
+  }
 
   return (
     <aside className={`
@@ -51,7 +75,6 @@ export default function Sidebar({
           </h2>
         )}
         
-        {/* Mobile Close Button */}
         <button
           onClick={closeMobileMenu}
           className={`p-2 rounded-lg transition-colors lg:hidden ${isDark ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-500'}`}
@@ -60,7 +83,6 @@ export default function Sidebar({
           <X size={24} />
         </button>
 
-        {/* Desktop Collapse Button */}
         <button
           onClick={toggleSidebar}
           className={`p-2 rounded-lg transition-colors hidden lg:block ${isDark ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-500'}`}
@@ -96,6 +118,46 @@ export default function Sidebar({
           )
         })}
       </nav>
+
+      {/* NEW: User Profile Section with Dropdown */}
+      <div className={`relative px-3 pb-3 border-t ${isDark ? 'border-gray-800' : 'border-gray-200'}`}>
+        
+        {/* Dropdown Menu (Floating Above) */}
+        {isProfileMenuOpen && !isCollapsed && (
+          <div className={`absolute bottom-full left-3 right-3 mb-2 rounded-xl border shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200 ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'}`}>
+            <div className={`px-4 py-3 border-b ${isDark ? 'border-gray-800 bg-gray-800/50' : 'border-gray-100 bg-gray-50'}`}>
+              <p className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">Signed in as</p>
+              <p className="text-sm font-medium truncate mt-0.5">{userEmail}</p>
+            </div>
+            <button 
+              onClick={handleLogout}
+              className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium text-red-500 hover:bg-red-500/10 transition-colors"
+            >
+              <LogOut size={16} /> Sign Out
+            </button>
+          </div>
+        )}
+
+        {/* Profile Trigger Button */}
+        <button
+          onClick={handleProfileClick}
+          className={`w-full flex items-center rounded-xl transition-colors 
+            ${isCollapsed && !isMobileMenuOpen ? 'lg:justify-center lg:p-2' : 'px-3 py-3 gap-3'} 
+            ${isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-100'}`}
+          title={isCollapsed && !isMobileMenuOpen ? "Expand sidebar" : "User menu"}
+        >
+          {/* Avatar */}
+          <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-blue-500 to-blue-700 text-white font-bold text-sm shadow-sm">
+            {userInitial}
+          </div>
+          
+          {/* Name (Hidden when collapsed) */}
+          <div className={`flex-1 min-w-0 text-left ${isCollapsed && !isMobileMenuOpen ? 'lg:hidden' : ''}`}>
+            <p className="text-sm font-medium truncate">{userName}</p>
+            <p className="text-[10px] text-gray-500 truncate">View Profile</p>
+          </div>
+        </button>
+      </div>
 
       {/* Dark Mode Toggle */}
       <div className={`flex items-center ${isCollapsed && !isMobileMenuOpen ? 'lg:justify-center lg:pb-6' : 'px-3 pb-6'}`}>

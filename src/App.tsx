@@ -1,19 +1,59 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Sidebar from './components/Sidebar'
 import Home from './components/Home'
 import Tasks from './components/Tasks'
 import Finances from './components/Finances'
 import Goals from './components/Goals'
 import Reports from './components/Reports'
+import Auth from './components/Auth'
+import { supabase } from './lib/supabase'
 import { Menu } from 'lucide-react'
 
 function App() {
+  const [user, setUser] = useState<any>(null)
+  const [loadingAuth, setLoadingAuth] = useState(true)
+  
   const [currentPage, setCurrentPage] = useState('home')
   const [isDark, setIsDark] = useState(true)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
 
+  // Security Guard: Check if user is logged in
+  useEffect(() => {
+    // Check current session
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setUser(user)
+      setLoadingAuth(false)
+    })
+
+    // Listen for auth changes (login/logout)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
+      setUser(session?.user || null)
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
+
   const mainBg = isDark ? 'bg-gray-950 text-white' : 'bg-gray-50 text-gray-900'
+
+  // Show loading spinner while checking auth
+  if (loadingAuth) {
+    return (
+      <div className={`flex h-screen items-center justify-center ${mainBg}`}>
+        <div className="text-center">
+          <h1 className={`text-3xl font-bold tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            Life<span className="text-blue-500">OS</span>
+          </h1>
+          <p className="mt-2 text-sm text-gray-500">Securing your dashboard...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // If no user, show Auth screen
+  if (!user) {
+    return <Auth isDark={isDark} />
+  }
 
   const getMaxWidthClasses = () => {
     const base = "w-full mx-auto px-4 sm:px-0 transition-all duration-300";
@@ -66,6 +106,7 @@ function App() {
         toggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
         isMobileMenuOpen={isMobileMenuOpen}
         closeMobileMenu={() => setIsMobileMenuOpen(false)}
+        user={user} // Pass user to sidebar for profile section
       />
 
       {/* Main Content */}

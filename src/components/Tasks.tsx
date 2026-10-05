@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, Pencil, Check, Calendar, AlertCircle } from 'lucide-react'
+import { Plus, Trash2, Pencil, Check, Calendar, AlertCircle, RefreshCw } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import Modal from './Modal'
 
@@ -9,6 +9,8 @@ interface Task {
   completed: boolean
   due_date: string | null
   priority: 'high' | 'medium' | 'low'
+  category?: string | null
+  recurrence?: string | null
   created_at: string
 }
 
@@ -17,11 +19,28 @@ interface TasksProps {
   isSidebarCollapsed: boolean
 }
 
-// Helper to get local date string (YYYY-MM-DD) to avoid UTC timezone bugs
 const getLocalDateString = (date: Date) => {
   const offset = date.getTimezoneOffset();
   const localDate = new Date(date.getTime() - (offset * 60 * 1000));
   return localDate.toISOString().split('T')[0];
+};
+
+const getCategoryColor = (cat: string) => {
+  switch(cat) {
+    case 'Work': return 'text-blue-500 bg-blue-500/10';
+    case 'Personal': return 'text-purple-500 bg-purple-500/10';
+    case 'Health': return 'text-green-500 bg-green-500/10';
+    case 'Finance': return 'text-orange-500 bg-orange-500/10';
+    default: return 'text-gray-500 bg-gray-500/10';
+  }
+}
+
+const getNextDueDate = (currentDateStr: string, recurrence: string): string => {
+  const date = new Date(currentDateStr);
+  if (recurrence === 'daily') date.setDate(date.getDate() + 1);
+  else if (recurrence === 'weekly') date.setDate(date.getDate() + 7);
+  else if (recurrence === 'monthly') date.setMonth(date.getMonth() + 1);
+  return getLocalDateString(date);
 };
 
 export default function Tasks({ isDark, isSidebarCollapsed }: TasksProps) {
@@ -29,13 +48,18 @@ export default function Tasks({ isDark, isSidebarCollapsed }: TasksProps) {
   const [input, setInput] = useState('')
   const [dueDate, setDueDate] = useState(getLocalDateString(new Date()))
   const [priority, setPriority] = useState<'high' | 'medium' | 'low'>('medium')
+  const [category, setCategory] = useState<string>('Personal')
+  const [recurrence, setRecurrence] = useState<string>('none')
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [selectedFilter, setSelectedFilter] = useState<string>('All')
 
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editText, setEditText] = useState('')
   const [editDueDate, setEditDueDate] = useState('')
   const [editPriority, setEditPriority] = useState<'high' | 'medium' | 'low'>('medium')
+  const [editCategory, setEditCategory] = useState<string>('Personal')
+  const [editRecurrence, setEditRecurrence] = useState<string>('none')
 
   useEffect(() => { fetchTasks() }, [])
 
@@ -53,7 +77,9 @@ export default function Tasks({ isDark, isSidebarCollapsed }: TasksProps) {
       text: input, 
       completed: false, 
       due_date: dueDate ? new Date(dueDate).toISOString() : null, 
-      priority 
+      priority,
+      category,
+      recurrence: recurrence === 'none' ? null : recurrence
     }
     const { data, error } = await supabase.from('tasks').insert([newTask]).select()
     if (error) console.error('Error adding task:', error)
@@ -62,6 +88,8 @@ export default function Tasks({ isDark, isSidebarCollapsed }: TasksProps) {
       setInput('')
       setDueDate(getLocalDateString(new Date()))
       setPriority('medium')
+      setCategory('Personal')
+      setRecurrence('none')
       setIsModalOpen(false)
     }
   }
@@ -70,6 +98,24 @@ export default function Tasks({ isDark, isSidebarCollapsed }: TasksProps) {
     const taskToToggle = tasks.find(t => t.id === id)
     if (!taskToToggle) return
     const newStatus = !taskToToggle.completed
+    
+    if (newStatus && taskToToggle.recurrence && taskToToggle.due_date) {
+      const nextDate = getNextDueDate(taskToToggle.due_date, taskToToggle.recurrence);
+      const nextTask = {
+        text: taskToToggle.text,
+        completed: false,
+        due_date: new Date(nextDate).toISOString(),
+        priority: taskToToggle.priority,
+        category: taskToToggle.category,
+        recurrence: taskToToggle.recurrence
+      };
+      const { data: newData, error: insertError } = await supabase.from('tasks').insert([nextTask]).select()
+      if (insertError) console.error('Error creating recurring task:', insertError)
+      else if (newData) {
+        setTasks(prev => [newData[0], ...prev])
+      }
+    }
+
     const { error } = await supabase.from('tasks').update({ completed: newStatus }).eq('id', id)
     if (!error) setTasks(tasks.map(t => t.id === id ? { ...t, completed: newStatus } : t))
   }
@@ -84,6 +130,8 @@ export default function Tasks({ isDark, isSidebarCollapsed }: TasksProps) {
     setEditText(task.text)
     setEditDueDate(task.due_date ? getLocalDateString(new Date(task.due_date)) : '')
     setEditPriority(task.priority || 'medium')
+    setEditCategory(task.category || 'Personal')
+    setEditRecurrence(task.recurrence || 'none')
   }
 
   const saveEdit = async (id: number) => {
@@ -91,10 +139,19 @@ export default function Tasks({ isDark, isSidebarCollapsed }: TasksProps) {
     const { error } = await supabase.from('tasks').update({ 
       text: editText.trim(), 
       due_date: editDueDate ? new Date(editDueDate).toISOString() : null, 
-      priority: editPriority 
+      priority: editPriority,
+      category: editCategory,
+      recurrence: editRecurrence === 'none' ? null : editRecurrence
     }).eq('id', id)
     if (!error) {
-      setTasks(tasks.map(t => t.id === id ? { ...t, text: editText.trim(), due_date: editDueDate ? new Date(editDueDate).toISOString() : null, priority: editPriority } : t))
+      setTasks(tasks.map(t => t.id === id ? { 
+        ...t, 
+        text: editText.trim(), 
+        due_date: editDueDate ? new Date(editDueDate).toISOString() : null, 
+        priority: editPriority, 
+        category: editCategory,
+        recurrence: editRecurrence === 'none' ? null : editRecurrence
+      } : t))
       setEditingId(null)
     }
   }
@@ -107,25 +164,37 @@ export default function Tasks({ isDark, isSidebarCollapsed }: TasksProps) {
 
   const getTaskDateStr = (dateStr: string | null) => dateStr ? dateStr.split('T')[0] : null
 
-  const overdueTasks = tasks.filter(t => !t.completed && t.due_date && getTaskDateStr(t.due_date) < todayString)
+  const filteredTasks = selectedFilter === 'All' 
+    ? tasks 
+    : tasks.filter(t => t.category === selectedFilter)
+
+  const overdueTasks = filteredTasks.filter(t => !t.completed && t.due_date && getTaskDateStr(t.due_date) < todayString)
   
-  const todayTasks = tasks.filter(t => {
+  const todayTasks = filteredTasks.filter(t => {
     if (t.completed || !t.due_date) return false
     return getTaskDateStr(t.due_date) === todayString
   }).sort((a, b) => {
-    const priorityOrder = { high: 1, medium: 2, low: 3 }
-    return priorityOrder[a.priority] - priorityOrder[b.priority]
+    const priorityOrder: { [key: string]: number } = { high: 1, medium: 2, low: 3 }
+    const aPriority = a.priority ? priorityOrder[a.priority] || 999 : 999;
+    const bPriority = b.priority ? priorityOrder[b.priority] || 999 : 999;
+    return aPriority - bPriority;
   })
 
-  const upcomingTasks = tasks.filter(t => {
+  const upcomingTasks = filteredTasks.filter(t => {
     if (t.completed || !t.due_date) return false
     const taskDateStr = getTaskDateStr(t.due_date)
-    return taskDateStr > todayString && taskDateStr <= maxDateString
-  }).sort((a, b) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime())
+    return taskDateStr ? taskDateStr > todayString && taskDateStr <= maxDateString : false
+  }).sort((a, b) => {
+    const aDate = a.due_date ? new Date(a.due_date).getTime() : 0;
+    const bDate = b.due_date ? new Date(b.due_date).getTime() : 0;
+    return aDate - bDate;
+  })
 
-  const completedTasks = tasks.filter(t => t.completed).slice(0, 5)
+  // UPDATED: Only show tasks completed TODAY, preserving all data in the database
+  const completedTasks = filteredTasks.filter(t => t.completed && t.due_date && getTaskDateStr(t.due_date) === todayString)
+  
   const completedThisWeek = tasks.filter(t => t.completed && t.created_at >= todayString).length
-  const overdueCount = overdueTasks.length
+  const overdueCount = tasks.filter(t => !t.completed && t.due_date && getTaskDateStr(t.due_date) < todayString).length
 
   const cardBg = isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'
   const inputBg = isDark ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-400'
@@ -145,7 +214,6 @@ export default function Tasks({ isDark, isSidebarCollapsed }: TasksProps) {
   return (
     <div className={`w-full space-y-6 transition-all duration-300 mx-auto px-4 sm:px-0 relative ${isSidebarCollapsed ? 'max-w-5xl' : 'max-w-3xl'}`}>
       
-      {/* UPDATED HEADER: Weekly Review + Desktop "New Task" Button */}
       <div className={`p-5 rounded-2xl border shadow-sm ${cardBg} transition-colors flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4`}>
         <div>
           <h3 className="text-lg font-semibold">Weekly Review</h3>
@@ -153,7 +221,6 @@ export default function Tasks({ isDark, isSidebarCollapsed }: TasksProps) {
         </div>
         
         <div className="flex flex-col sm:flex-row items-center gap-4 w-full lg:w-auto">
-          {/* Stats */}
           <div className="flex gap-6 text-center">
             <div>
               <p className="text-2xl font-bold text-green-500">{completedThisWeek}</p>
@@ -165,7 +232,6 @@ export default function Tasks({ isDark, isSidebarCollapsed }: TasksProps) {
             </div>
           </div>
           
-          {/* Desktop "New Task" Button (Top Right) */}
           <button 
             onClick={() => setIsModalOpen(true)} 
             className="hidden lg:flex px-5 py-2.5 rounded-xl font-medium transition bg-blue-600 hover:bg-blue-700 text-white items-center gap-2 active:scale-95 shadow-md shadow-blue-600/20 whitespace-nowrap"
@@ -173,6 +239,22 @@ export default function Tasks({ isDark, isSidebarCollapsed }: TasksProps) {
             <Plus size={18} /> New Task
           </button>
         </div>
+      </div>
+
+      <div className={`flex gap-2 overflow-x-auto pb-2 sm:pb-0 w-full px-1`}>
+        {(['All', 'Work', 'Personal', 'Health', 'Finance'] as const).map(cat => (
+          <button 
+            key={cat} 
+            onClick={() => setSelectedFilter(cat)}
+            className={`px-4 py-1.5 rounded-lg text-xs font-medium transition whitespace-nowrap ${
+              selectedFilter === cat 
+                ? 'bg-blue-600 text-white' 
+                : (isDark ? 'bg-gray-800 text-gray-400 hover:text-white' : 'bg-gray-100 text-gray-600 hover:text-gray-900')
+            }`}
+          >
+            {cat}
+          </button>
+        ))}
       </div>
 
       {loading ? (
@@ -187,7 +269,7 @@ export default function Tasks({ isDark, isSidebarCollapsed }: TasksProps) {
               </h4>
               <div className="space-y-2">
                 {overdueTasks.map(task => (
-                  <TaskItem key={task.id} task={task} isDark={isDark} taskItemBg={taskItemBg} inputBg={inputBg} getPriorityColor={getPriorityColor} formatDate={formatDate} toggleTask={toggleTask} startEdit={startEdit} deleteTask={deleteTask} editingId={editingId} editText={editText} editDueDate={editDueDate} editPriority={editPriority} setEditText={setEditText} setEditDueDate={setEditDueDate} setEditPriority={setEditPriority} saveEdit={saveEdit} setEditingId={setEditingId} />
+                  <TaskItem key={task.id} task={task} isDark={isDark} taskItemBg={taskItemBg} inputBg={inputBg} getPriorityColor={getPriorityColor} getCategoryColor={getCategoryColor} formatDate={formatDate} toggleTask={toggleTask} startEdit={startEdit} deleteTask={deleteTask} editingId={editingId} editText={editText} editDueDate={editDueDate} editPriority={editPriority} editCategory={editCategory} editRecurrence={editRecurrence} setEditText={setEditText} setEditDueDate={setEditDueDate} setEditPriority={setEditPriority} setEditCategory={setEditCategory} setEditRecurrence={setEditRecurrence} saveEdit={saveEdit} setEditingId={setEditingId} />
                 ))}
               </div>
             </div>
@@ -202,7 +284,7 @@ export default function Tasks({ isDark, isSidebarCollapsed }: TasksProps) {
             ) : (
               <div className="space-y-2">
                 {todayTasks.map(task => (
-                  <TaskItem key={task.id} task={task} isDark={isDark} taskItemBg={taskItemBg} inputBg={inputBg} getPriorityColor={getPriorityColor} formatDate={formatDate} toggleTask={toggleTask} startEdit={startEdit} deleteTask={deleteTask} editingId={editingId} editText={editText} editDueDate={editDueDate} editPriority={editPriority} setEditText={setEditText} setEditDueDate={setEditDueDate} setEditPriority={setEditPriority} saveEdit={saveEdit} setEditingId={setEditingId} />
+                  <TaskItem key={task.id} task={task} isDark={isDark} taskItemBg={taskItemBg} inputBg={inputBg} getPriorityColor={getPriorityColor} getCategoryColor={getCategoryColor} formatDate={formatDate} toggleTask={toggleTask} startEdit={startEdit} deleteTask={deleteTask} editingId={editingId} editText={editText} editDueDate={editDueDate} editPriority={editPriority} editCategory={editCategory} editRecurrence={editRecurrence} setEditText={setEditText} setEditDueDate={setEditDueDate} setEditPriority={setEditPriority} setEditCategory={setEditCategory} setEditRecurrence={setEditRecurrence} saveEdit={saveEdit} setEditingId={setEditingId} />
                 ))}
               </div>
             )}
@@ -215,20 +297,21 @@ export default function Tasks({ isDark, isSidebarCollapsed }: TasksProps) {
               </h4>
               <div className="space-y-2">
                 {upcomingTasks.map(task => (
-                  <TaskItem key={task.id} task={task} isDark={isDark} taskItemBg={taskItemBg} inputBg={inputBg} getPriorityColor={getPriorityColor} formatDate={formatDate} toggleTask={toggleTask} startEdit={startEdit} deleteTask={deleteTask} editingId={editingId} editText={editText} editDueDate={editDueDate} editPriority={editPriority} setEditText={setEditText} setEditDueDate={setEditDueDate} setEditPriority={setEditPriority} saveEdit={saveEdit} setEditingId={setEditingId} />
+                  <TaskItem key={task.id} task={task} isDark={isDark} taskItemBg={taskItemBg} inputBg={inputBg} getPriorityColor={getPriorityColor} getCategoryColor={getCategoryColor} formatDate={formatDate} toggleTask={toggleTask} startEdit={startEdit} deleteTask={deleteTask} editingId={editingId} editText={editText} editDueDate={editDueDate} editPriority={editPriority} editCategory={editCategory} editRecurrence={editRecurrence} setEditText={setEditText} setEditDueDate={setEditDueDate} setEditPriority={setEditPriority} setEditCategory={setEditCategory} setEditRecurrence={setEditRecurrence} saveEdit={saveEdit} setEditingId={setEditingId} />
                 ))}
               </div>
             </div>
           )}
 
+          {/* UPDATED: Completed Today Section */}
           {completedTasks.length > 0 && (
             <div>
               <h4 className="text-sm font-semibold text-green-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                <Check size={16} /> Completed Recently (Tap to reverse)
+                <Check size={16} /> Completed Today (Tap to reverse)
               </h4>
               <div className="space-y-2 opacity-70">
                 {completedTasks.map(task => (
-                  <TaskItem key={task.id} task={task} isDark={isDark} taskItemBg={taskItemBg} inputBg={inputBg} getPriorityColor={getPriorityColor} formatDate={formatDate} toggleTask={toggleTask} startEdit={startEdit} deleteTask={deleteTask} editingId={editingId} editText={editText} editDueDate={editDueDate} editPriority={editPriority} setEditText={setEditText} setEditDueDate={setEditDueDate} setEditPriority={setEditPriority} saveEdit={saveEdit} setEditingId={setEditingId} />
+                  <TaskItem key={task.id} task={task} isDark={isDark} taskItemBg={taskItemBg} inputBg={inputBg} getPriorityColor={getPriorityColor} getCategoryColor={getCategoryColor} formatDate={formatDate} toggleTask={toggleTask} startEdit={startEdit} deleteTask={deleteTask} editingId={editingId} editText={editText} editDueDate={editDueDate} editPriority={editPriority} editCategory={editCategory} editRecurrence={editRecurrence} setEditText={setEditText} setEditDueDate={setEditDueDate} setEditPriority={setEditPriority} setEditCategory={setEditCategory} setEditRecurrence={setEditRecurrence} saveEdit={saveEdit} setEditingId={setEditingId} />
                 ))}
               </div>
             </div>
@@ -242,7 +325,6 @@ export default function Tasks({ isDark, isSidebarCollapsed }: TasksProps) {
         </div>
       )}
 
-      {/* Mobile Floating Action Button (FAB) - Stays at bottom right */}
       <button 
         onClick={() => setIsModalOpen(true)} 
         className="lg:hidden fixed bottom-6 right-6 w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg shadow-blue-600/30 flex items-center justify-center transition-transform active:scale-90 z-30"
@@ -271,6 +353,40 @@ export default function Tasks({ isDark, isSidebarCollapsed }: TasksProps) {
             </div>
           </div>
 
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">Category</label>
+            <div className={`flex p-1 rounded-xl h-[42px] ${isDark ? 'bg-gray-800' : 'bg-gray-100'}`}>
+              {(['Work', 'Personal', 'Health', 'Finance'] as const).map(c => (
+                <button 
+                  key={c} 
+                  onClick={() => setCategory(c)} 
+                  className={`flex-1 rounded-lg text-xs font-medium transition ${category === c ? getCategoryColor(c) : 'text-gray-500'}`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">Repeat</label>
+            <div className={`flex p-1 rounded-xl h-[42px] ${isDark ? 'bg-gray-800' : 'bg-gray-100'}`}>
+              {(['none', 'daily', 'weekly', 'monthly'] as const).map(r => (
+                <button 
+                  key={r} 
+                  onClick={() => setRecurrence(r)} 
+                  className={`flex-1 rounded-lg text-xs font-medium capitalize transition ${
+                    recurrence === r 
+                      ? 'bg-blue-600 text-white' 
+                      : 'text-gray-500'
+                  }`}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="flex gap-3 pt-2">
             <button onClick={() => setIsModalOpen(false)} className={`flex-1 px-4 py-3 rounded-xl font-medium transition ${isDark ? 'bg-gray-800 hover:bg-gray-700 text-gray-300' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'}`}>Cancel</button>
             <button onClick={addTask} className="flex-1 px-4 py-3 rounded-xl font-medium transition bg-blue-600 hover:bg-blue-700 text-white active:scale-95">Add Task</button>
@@ -281,7 +397,7 @@ export default function Tasks({ isDark, isSidebarCollapsed }: TasksProps) {
   )
 }
 
-function TaskItem({ task, isDark, taskItemBg, inputBg, getPriorityColor, formatDate, toggleTask, startEdit, deleteTask, editingId, editText, editDueDate, editPriority, setEditText, setEditDueDate, setEditPriority, saveEdit, setEditingId }: any) {
+function TaskItem({ task, isDark, taskItemBg, inputBg, getPriorityColor, getCategoryColor, formatDate, toggleTask, startEdit, deleteTask, editingId, editText, editDueDate, editPriority, editCategory, editRecurrence, setEditText, setEditDueDate, setEditPriority, setEditCategory, setEditRecurrence, saveEdit, setEditingId }: any) {
   if (editingId === task.id) {
     return (
       <div className={`p-4 rounded-xl border space-y-3 ${taskItemBg}`}>
@@ -291,6 +407,22 @@ function TaskItem({ task, isDark, taskItemBg, inputBg, getPriorityColor, formatD
           <div className={`flex p-1 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-gray-100'}`}>
             {(['high', 'medium', 'low'] as const).map(p => (
               <button key={p} onClick={() => setEditPriority(p)} className={`flex-1 rounded-lg text-xs font-medium capitalize transition ${editPriority === p ? (p === 'high' ? 'bg-red-500 text-white' : p === 'medium' ? 'bg-yellow-500 text-white' : 'bg-green-500 text-white') : 'text-gray-500'}`}>{p}</button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 mb-1 block">Category</label>
+          <div className={`flex p-1 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-gray-100'}`}>
+            {(['Work', 'Personal', 'Health', 'Finance'] as const).map(c => (
+              <button key={c} onClick={() => setEditCategory(c)} className={`flex-1 rounded-lg text-xs font-medium transition ${editCategory === c ? getCategoryColor(c) : 'text-gray-500'}`}>{c}</button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 mb-1 block">Repeat</label>
+          <div className={`flex p-1 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-gray-100'}`}>
+            {(['none', 'daily', 'weekly', 'monthly'] as const).map(r => (
+              <button key={r} onClick={() => setEditRecurrence(r)} className={`flex-1 rounded-lg text-xs font-medium capitalize transition ${editRecurrence === r ? 'bg-blue-600 text-white' : 'text-gray-500'}`}>{r}</button>
             ))}
           </div>
         </div>
@@ -308,10 +440,14 @@ function TaskItem({ task, isDark, taskItemBg, inputBg, getPriorityColor, formatD
         {task.completed && <Check size={14} />}
       </button>
       <div className="flex-1 min-w-0">
-        <p className={`font-medium truncate ${task.completed ? 'line-through text-gray-500' : ''}`}>{task.text}</p>
-        <div className="flex items-center gap-2 mt-1">
+        <div className="flex items-center gap-2">
+            <p className={`font-medium truncate ${task.completed ? 'line-through text-gray-500' : ''}`}>{task.text}</p>
+            {task.recurrence && <RefreshCw size={12} className="text-blue-500 flex-shrink-0" />}
+        </div>
+        <div className="flex items-center gap-2 mt-1 flex-wrap">
           {task.due_date && <span className="text-xs text-gray-500 flex items-center gap-1"><Calendar size={10} /> {formatDate(task.due_date)}</span>}
-          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${getPriorityColor(task.priority)}`}>{task.priority}</span>
+          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${getPriorityColor(task.priority || 'medium')}`}>{task.priority || 'medium'}</span>
+          {task.category && <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${getCategoryColor(task.category)}`}>{task.category}</span>}
         </div>
       </div>
       <div className="flex gap-1 flex-shrink-0">
