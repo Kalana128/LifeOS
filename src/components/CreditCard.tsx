@@ -11,7 +11,7 @@ interface Charge {
   date: string
   created_at: string
   is_installment: boolean
-  months?: number
+  installment_months?: number
   monthly_amount?: number
   interest_rate?: number 
   user_id?: string
@@ -98,25 +98,33 @@ export default function CreditCard({ isDark, isSidebarCollapsed }: CreditCardPro
       
       if (chargesRes.error) {
         console.error('Error fetching charges:', chargesRes.error)
-        alert('Failed to load charges: ' + chargesRes.error.message)
       } else if (chargesRes.data) {
-        console.log('DEBUG: Loaded', chargesRes.data.length, 'charges')
+        console.log('DEBUG: Loaded charges:', chargesRes.data)
+        // FIXED: Map installment_months to months for consistency
         setCharges(chargesRes.data.map(c => ({ 
-          ...c, 
+          id: c.id,
+          description: c.description || '',
           amount: Number(c.amount) || 0,
+          date: c.date,
+          created_at: c.created_at,
+          is_installment: c.is_installment || false,
+          installment_months: c.installment_months ? Number(c.installment_months) : undefined,
           monthly_amount: c.monthly_amount ? Number(c.monthly_amount) : undefined,
-          interest_rate: c.interest_rate ? Number(c.interest_rate) : 0
+          interest_rate: c.interest_rate ? Number(c.interest_rate) : 0,
+          user_id: c.user_id
         })))
       }
       
       if (paymentsRes.error) {
         console.error('Error fetching payments:', paymentsRes.error)
-        alert('Failed to load payments: ' + paymentsRes.error.message)
       } else if (paymentsRes.data) {
-        console.log('DEBUG: Loaded', paymentsRes.data.length, 'payments')
+        console.log('DEBUG: Loaded payments:', paymentsRes.data)
         setPayments(paymentsRes.data.map(p => ({ 
-          ...p, 
-          amount: Number(p.amount) || 0 
+          id: p.id,
+          amount: Number(p.amount) || 0,
+          date: p.date,
+          created_at: p.created_at,
+          user_id: p.user_id
         })))
       }
     } catch (error) {
@@ -182,7 +190,7 @@ export default function CreditCard({ isDark, isSidebarCollapsed }: CreditCardPro
       description: description.trim(), 
       amount: principal, 
       is_installment: isInstallment, 
-      months: monthsNum, 
+      installment_months: monthsNum,
       monthly_amount: monthlyAmount,
       interest_rate: feePercentage,
       date: chargeDate ? new Date(chargeDate).toISOString() : new Date().toISOString(),
@@ -195,11 +203,17 @@ export default function CreditCard({ isDark, isSidebarCollapsed }: CreditCardPro
       console.error('Error adding charge:', error)
       alert('Failed to add charge: ' + error.message)
     } else if (data && data.length > 0) { 
-      const mappedCharge = { 
-        ...data[0], 
-        amount: Number(data[0].amount), 
+      const mappedCharge: Charge = {
+        id: data[0].id,
+        description: data[0].description || '',
+        amount: Number(data[0].amount) || 0,
+        date: data[0].date,
+        created_at: data[0].created_at,
+        is_installment: data[0].is_installment || false,
+        installment_months: data[0].installment_months ? Number(data[0].installment_months) : undefined,
         monthly_amount: data[0].monthly_amount ? Number(data[0].monthly_amount) : undefined,
-        interest_rate: data[0].interest_rate ? Number(data[0].interest_rate) : 0
+        interest_rate: data[0].interest_rate ? Number(data[0].interest_rate) : 0,
+        user_id: data[0].user_id
       }
       setCharges([mappedCharge, ...charges])
       setDescription(''); 
@@ -209,7 +223,6 @@ export default function CreditCard({ isDark, isSidebarCollapsed }: CreditCardPro
       setInterestRate(''); 
       setIsInstallment(false); 
       setChargeDate(getDateString(new Date()))
-      alert('Charge added successfully!')
     }
     setAddingCharge(false)
   }
@@ -233,15 +246,17 @@ export default function CreditCard({ isDark, isSidebarCollapsed }: CreditCardPro
       console.error('Error adding payment:', error)
       alert('Failed to add payment: ' + error.message)
     } else if (data && data.length > 0) { 
-      const mappedPayment = { 
-        ...data[0], 
-        amount: Number(data[0].amount) 
+      const mappedPayment: Payment = {
+        id: data[0].id,
+        amount: Number(data[0].amount) || 0,
+        date: data[0].date,
+        created_at: data[0].created_at,
+        user_id: data[0].user_id
       }
       setPayments([mappedPayment, ...payments])
       setPaymentAmount(''); 
       setFormattedPaymentAmount(''); 
       setPaymentDate(getDateString(new Date()))
-      alert('Payment recorded successfully!')
     }
     setAddingPayment(false)
   }
@@ -274,7 +289,7 @@ export default function CreditCard({ isDark, isSidebarCollapsed }: CreditCardPro
     setEditAmount(String(charge.amount)); 
     setFormattedEditAmount(Number(charge.amount).toLocaleString('en-US')); 
     setEditIsInstallment(charge.is_installment); 
-    setEditMonths(charge.months ? String(charge.months) : '');
+    setEditMonths(charge.installment_months ? String(charge.installment_months) : '');
     setEditInterestRate(charge.interest_rate ? String(charge.interest_rate) : '0');
     setEditDate(charge.date ? getDateString(new Date(charge.date)) : getDateString(new Date()))
   }
@@ -297,7 +312,7 @@ export default function CreditCard({ isDark, isSidebarCollapsed }: CreditCardPro
       description: editDescription.trim(), 
       amount: principal, 
       is_installment: editIsInstallment, 
-      months: monthsNum, 
+      installment_months: monthsNum,
       monthly_amount: monthlyAmount,
       interest_rate: feePercentage,
       date: editDate ? new Date(editDate).toISOString() : new Date().toISOString()
@@ -312,12 +327,11 @@ export default function CreditCard({ isDark, isSidebarCollapsed }: CreditCardPro
         description: editDescription.trim(), 
         amount: principal, 
         is_installment: editIsInstallment, 
-        months: monthsNum, 
+        installment_months: monthsNum,
         monthly_amount: monthlyAmount,
         interest_rate: feePercentage
       } : c))
       setEditingId(null)
-      alert('Charge updated successfully!')
     }
   }
 
@@ -330,7 +344,6 @@ export default function CreditCard({ isDark, isSidebarCollapsed }: CreditCardPro
   const inputBg = isDark ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-400'
   const rowBg = isDark ? 'bg-gray-800 border-gray-700' : 'bg-gray-50 border-gray-100'
 
-  // FIXED: Calculate from ALL data, not filtered
   const totalCharges = charges.reduce((sum, c) => sum + (Number(c.amount) || 0), 0)
   const totalPayments = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
   const balance = totalCharges - totalPayments
@@ -653,7 +666,7 @@ export default function CreditCard({ isDark, isSidebarCollapsed }: CreditCardPro
                       <p className="text-xs text-gray-500 flex items-center gap-1 flex-wrap">
                         <Calendar size={12} className="flex-shrink-0" />
                         <span>{new Date(c.date).toLocaleDateString()}</span>
-                        {c.is_installment && c.months && <span>• {c.months} months</span>}
+                        {c.is_installment && c.installment_months && <span>• {c.installment_months} months</span>}
                         {c.is_installment && c.interest_rate && c.interest_rate > 0 && <span>• {c.interest_rate}% fee</span>}
                         {c.monthly_amount && <span>• {formatMoney(c.monthly_amount)}/month</span>}
                       </p>
