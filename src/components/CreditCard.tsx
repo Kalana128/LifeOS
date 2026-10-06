@@ -77,7 +77,7 @@ export default function CreditCard({ isDark, isSidebarCollapsed }: CreditCardPro
   const [editInterestRate, setEditInterestRate] = useState('')
   const [editDate, setEditDate] = useState('')
 
-  // NEW: Filter States
+  // Filter States
   const [searchQuery, setSearchQuery] = useState('')
   const today = new Date()
   const [startDate, setStartDate] = useState(getDateString(new Date(today.getFullYear(), today.getMonth(), 1)))
@@ -103,7 +103,7 @@ export default function CreditCard({ isDark, isSidebarCollapsed }: CreditCardPro
     setLoading(false)
   }
 
-  // NEW: Filter Logic
+  // Filter Logic for the lists
   const filteredCharges = useMemo(() => {
     const start = new Date(startDate); start.setHours(0, 0, 0, 0);
     const end = new Date(endDate); end.setHours(23, 59, 59, 999);
@@ -127,6 +127,7 @@ export default function CreditCard({ isDark, isSidebarCollapsed }: CreditCardPro
     if (!amount || parseFloat(amount) <= 0) { alert('Please enter a valid amount'); return }
 
     const principal = parseFloat(amount)
+    // Uses ALL charges/payments to accurately check against the limit
     const currentBalance = charges.reduce((sum, c) => sum + Number(c.amount), 0) - payments.reduce((sum, p) => sum + Number(p.amount), 0)
     if (currentBalance + principal > CREDIT_CARD_LIMIT) {
       const availableBalance = Math.max(0, CREDIT_CARD_LIMIT - currentBalance)
@@ -255,20 +256,21 @@ export default function CreditCard({ isDark, isSidebarCollapsed }: CreditCardPro
   const inputBg = isDark ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500' : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-400'
   const rowBg = isDark ? 'bg-gray-800 border-gray-700' : 'bg-gray-50 border-gray-100'
 
-  // UPDATED: Calculations now use filtered data
-  const totalCharges = filteredCharges.reduce((sum, c) => sum + Number(c.amount), 0)
-  const totalPayments = filteredPayments.reduce((sum, p) => sum + Number(p.amount), 0)
+  // FIXED: Top-level calculations now use ALL data to show true credit status,
+  // while the lists below remain filtered for viewing.
+  const totalCharges = charges.reduce((sum, c) => sum + Number(c.amount), 0)
+  const totalPayments = payments.reduce((sum, p) => sum + Number(p.amount), 0)
   const balance = totalCharges - totalPayments
   const availableBalance = Math.max(0, CREDIT_CARD_LIMIT - balance);
 
   const currentMonth = new Date().getMonth()
   const currentYear = new Date().getFullYear()
   
-  const totalInstallmentMonthly = filteredCharges
+  const totalInstallmentMonthly = charges
     .filter(c => c.is_installment && c.monthly_amount)
     .reduce((sum, c) => sum + (c.monthly_amount || 0), 0)
   
-  const currentMonthRegularCharges = filteredCharges
+  const currentMonthRegularCharges = charges
     .filter(c => {
       if (c.is_installment) return false
       const cDate = new Date(c.date)
@@ -278,7 +280,7 @@ export default function CreditCard({ isDark, isSidebarCollapsed }: CreditCardPro
   
   const monthlyDue = totalInstallmentMonthly + currentMonthRegularCharges
 
-  // NEW: Filter Helpers
+  // Filter Helpers
   const setPreset = (preset: 'month' | '30days' | 'all') => {
     const now = new Date();
     if (preset === 'month') { setStartDate(getDateString(new Date(now.getFullYear(), now.getMonth(), 1))); setEndDate(getDateString(now)); }
@@ -293,7 +295,7 @@ export default function CreditCard({ isDark, isSidebarCollapsed }: CreditCardPro
     <div className={`space-y-6 mt-8`}>
       <h3 className="text-lg font-semibold flex items-center gap-2"><CreditCardIcon size={20} className="text-blue-500" /> Credit Card</h3>
       
-      {/* NEW: Filter Section */}
+      {/* Filter Section */}
       <div className={`flex flex-col sm:flex-row gap-3 p-3 rounded-2xl border ${cardBg}`}>
         <div className="relative w-full sm:w-64">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
